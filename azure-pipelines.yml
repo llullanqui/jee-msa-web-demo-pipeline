@@ -142,15 +142,38 @@ stages:
               oc rollout status deployment/jee-msa-web-demo-pipeline
 
               echo "=== 8. Obteniendo URL de la Aplicación ==="
-              oc get route jee-msa-web-demo-pipeline -o jsonpath='{"URL: http://"}{.spec.host}{"\n"}'
+              ROUTE_HOST=$(oc get route jee-msa-web-demo-pipeline -o jsonpath='{.spec.host}')
+              if [ -z "$ROUTE_HOST" ]; then
+                echo "No se pudo obtener el hostname de la Route."
+                exit 1
+              fi
+              echo "URL: http://${ROUTE_HOST}"
+              echo "##vso[task.setvariable variable=routeUrl;isOutput=true]http://${ROUTE_HOST}"
+            name: get_route
             displayName: 'Descarga CLI, Login y Despliegue Docker'
 
   # ==========================================
-  # STAGE 4: NOTIFICACIONES (NOTIFICATIONS)
+  # STAGE 4: PRUEBAS SMOKE
+  # ==========================================
+  - stage: SmokeTests
+    displayName: 'Pruebas smoke'
+    dependsOn: CD
+    condition: succeeded()
+    variables:
+      routeUrl: $[ stageDependencies.CD.deploy_openshift.outputs['get_route.routeUrl'] ]
+    jobs:
+      - job: check_endpoint
+        steps:
+          - script: |
+              curl --fail --silent --show-error "$(routeUrl)/api/status"
+            displayName: 'Verificar endpoint de estado'
+
+  # ==========================================
+  # STAGE 5: NOTIFICACIONES (NOTIFICATIONS)
   # ==========================================
   - stage: Notifications
     displayName: 'Notificar'
-    dependsOn: [CI, Approval, CD]
+    dependsOn: [CI, Approval, CD, SmokeTests]
     condition: always()
     jobs:
       - job: send_status_email
